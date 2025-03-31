@@ -1,69 +1,76 @@
-# Welcome to your Lovable project
 
-## Project info
+# CodeGenie - Intelligent Code Explorer
 
-**URL**: https://lovable.dev/projects/f568d77e-3ae3-4802-85e2-71e083c13c5f
+CodeGenie is a tool for indexing, analyzing, and querying codebases in any programming language using natural language. It connects to a local Ollama server running open-source language models to provide intelligent responses about your code.
 
-## How can I edit this code?
+## Features
 
-There are several ways of editing your application.
+- Index code from Git repositories or local directories
+- Analyze code structure and dependencies
+- Ask questions about your codebase in natural language
+- Get suggestions for implementing new features
+- View and navigate through your codebase
+- Support for any programming language
 
-**Use Lovable**
+## Setup Instructions
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/f568d77e-3ae3-4802-85e2-71e083c13c5f) and start prompting.
+### Prerequisites
 
-Changes made via Lovable will be committed automatically to this repo.
+1. **Ollama Server**: You need to have Ollama running locally with a code-focused model.
+   - Download and install [Ollama](https://ollama.ai/download)
+   - Pull a code-focused model like DeepSeek Coder:
+     ```
+     ollama pull deepseek-coder
+     ```
+   - Start the Ollama server (usually runs on http://localhost:11434)
 
-**Use your preferred IDE**
+2. **Python**: For the backend code indexing service
+   - Python 3.7 or higher
+   - Install required packages:
+     ```
+     pip install -r backend_requirements.txt
+     ```
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Running the Application
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+1. **Start the backend server**:
+   ```
+   python run_backend.py
+   ```
+   This will start the Flask server on http://localhost:5000
 
-Follow these steps:
+2. **Start the frontend**:
+   ```
+   npm run dev
+   ```
+   This will start the React application on http://localhost:8080
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+3. **Connect to Ollama**:
+   - Open the app in your browser
+   - Enter your Ollama server URL (default: http://localhost:11434)
+   - Select the model you want to use (e.g., deepseek-coder)
+   - Click "Connect"
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+4. **Load your code**:
+   - Choose between loading from a Git repository or a local directory
+   - For repositories, paste the Git URL (and authentication token if needed)
+   - For local directories, enter the absolute path
 
-# Step 3: Install the necessary dependencies.
-npm i
+5. **Wait for indexing to complete**:
+   - The app will display the indexing progress
+   - Once complete, you can browse files or start querying your code
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+6. **Interact with your code**:
+   - Ask questions about your codebase
+   - Navigate through files and explore dependencies
+   - Get suggestions for implementing new features
 
-**Edit a file directly in GitHub**
+## Technologies Used
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- **Frontend**: React, TypeScript, TailwindCSS, shadcn/ui
+- **Backend**: Flask, Python
+- **LLM**: Ollama with DeepSeek-Coder or other code models
 
-**Use GitHub Codespaces**
+## License
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with .
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/f568d77e-3ae3-4802-85e2-71e083c13c5f) and click on Share -> Publish.
-
-## I want to use a custom domain - is that possible?
-
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+MIT
