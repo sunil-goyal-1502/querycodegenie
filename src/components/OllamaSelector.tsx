@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { CodeIndicesService } from '@/utils/codeIndicesService';
 import { useToast } from '@/components/ui/use-toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
 
 type OllamaSelectorProps = {
   onConnect: (connected: boolean, models: string[]) => void;
@@ -22,11 +24,14 @@ export function OllamaSelector({ onConnect, className }: OllamaSelectorProps) {
   const [serverUrl, setServerUrl] = useState('http://localhost:11434');
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const handleConnect = async () => {
     setIsConnecting(true);
+    setConnectionError(null);
     try {
+      console.log("Attempting to connect to Ollama server at:", serverUrl);
       const result = await CodeIndicesService.testOllamaConnection(serverUrl, selectedModel);
       
       if (result.connected) {
@@ -51,6 +56,7 @@ export function OllamaSelector({ onConnect, className }: OllamaSelectorProps) {
         onConnect(true, result.available_models || []);
       } else {
         setIsConnected(false);
+        setConnectionError(result.message);
         toast({
           title: "Connection Failed",
           description: result.message,
@@ -60,9 +66,11 @@ export function OllamaSelector({ onConnect, className }: OllamaSelectorProps) {
       }
     } catch (error) {
       console.error("Error connecting to Ollama:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to connect to Ollama server";
+      setConnectionError(errorMessage);
       toast({
         title: "Connection Error",
-        description: error instanceof Error ? error.message : "Failed to connect to Ollama server",
+        description: errorMessage,
         variant: "destructive",
       });
       onConnect(false, []);
@@ -136,6 +144,25 @@ export function OllamaSelector({ onConnect, className }: OllamaSelectorProps) {
           </Button>
         </div>
       </div>
+
+      {connectionError && (
+        <Alert variant="destructive" className="mt-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Connection Error</AlertTitle>
+          <AlertDescription>
+            {connectionError}
+            <div className="mt-2 text-xs">
+              Make sure:
+              <ul className="list-disc pl-5 mt-1">
+                <li>Your Ollama server is running</li>
+                <li>The URL is correct (including protocol)</li>
+                <li>The backend server is running at http://localhost:5000</li>
+                <li>You're accessing this app from the same machine where Ollama is running</li>
+              </ul>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="space-y-2">
         <Label>Model</Label>

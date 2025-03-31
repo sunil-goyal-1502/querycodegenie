@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import json
@@ -17,7 +16,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to allow requests from any origin
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Initialize global objects
 indexer = CodeIndexer()

@@ -1,4 +1,3 @@
-
 import { toast } from "@/components/ui/use-toast";
 
 // Base URL for API - change to the actual Python backend URL
@@ -59,6 +58,9 @@ export class CodeIndicesService {
     model: string = "deepseek-coder"
   ): Promise<OllamaStatus> {
     try {
+      console.log(`Testing connection to Ollama at ${baseUrl} with model ${model}`);
+      console.log(`Backend URL: ${API_BASE_URL}/test-ollama`);
+      
       const response = await fetch(`${API_BASE_URL}/test-ollama`, {
         method: "POST",
         headers: {
@@ -68,15 +70,19 @@ export class CodeIndicesService {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}`);
+        const errorText = await response.text();
+        console.error(`HTTP error ${response.status}: ${errorText}`);
+        throw new Error(`HTTP error ${response.status}: ${errorText}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+      console.log("Ollama connection test result:", result);
+      return result;
     } catch (error) {
       console.error("Error testing Ollama connection:", error);
       return {
         connected: false,
-        message: `Failed to connect to the backend: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Failed to connect to the backend: ${error instanceof Error ? error.message : String(error)}. Make sure your backend server is running at ${API_BASE_URL} and accessible from your browser.`,
       };
     }
   }
