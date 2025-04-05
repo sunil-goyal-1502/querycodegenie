@@ -1,218 +1,236 @@
-
 import os
 import json
 import logging
 import requests
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Generator
+from requests.exceptions import RequestException
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class OllamaClient:
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "deepseek-coder"):
-        self.base_url = base_url
+    def __init__(self, model: str = "llama3:8b"):
         self.model = model
-        self.api_url = f"{base_url}/api"
-        logger.info(f"Initialized OllamaClient with model: {model} at {base_url}")
+        self.base_url = "http://localhost:11434"
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Initialized OllamaClient with model: {model}")
     
-    def test_connection(self) -> Dict[str, Union[bool, str]]:
-        """Test the connection to the Ollama server."""
+    def test_connection(self) -> bool:
+        """Test connection to Ollama server."""
         try:
+            # First try to connect to the server
+            self.logger.info(f"Testing connection to Ollama server at {self.base_url}")
+            self.logger.info(f"Attempting to get available models from {self.base_url}/api/tags")
+            
             response = requests.get(f"{self.base_url}/api/tags")
-            if response.status_code == 200:
-                available_models = response.json().get("models", [])
-                model_names = [model["name"] for model in available_models]
+            self.logger.info(f"Ollama server response status: {response.status_code}")
+            self.logger.info(f"Ollama server response headers: {response.headers}")
+            
+            if response.status_code != 200:
+                self.logger.error(f"Ollama server returned non-200 status code: {response.status_code}")
+                self.logger.error(f"Response content: {response.text}")
+                return False
                 
-                if self.model in model_names:
-                    return {
-                        "connected": True,
-                        "message": f"Successfully connected to Ollama server. Model '{self.model}' is available.",
-                        "available_models": model_names
-                    }
-                else:
-                    suggested_model = next((model for model in model_names if "deepseek" in model or "coder" in model), model_names[0] if model_names else None)
-                    return {
-                        "connected": True,
-                        "message": f"Connected to Ollama server, but model '{self.model}' is not available. Available models: {', '.join(model_names)}",
-                        "suggested_model": suggested_model,
-                        "available_models": model_names
-                    }
+            response.raise_for_status()
+            
+            # Parse the response
+            data = response.json()
+            self.logger.info(f"Ollama server response data: {data}")
+            
+            if not isinstance(data, dict):
+                self.logger.error("Invalid response format from Ollama server")
+                return False
+                
+            # Check if models are available
+            models = data.get("models", [])
+            if not models:
+                self.logger.warning("No models available on Ollama server")
+                return False
+                
+            # Check if our model is available
+            model_names = [model.get("name") for model in models if isinstance(model, dict)]
+            self.logger.info(f"Available models: {model_names}")
+            
+            if not model_names:
+                self.logger.error("Invalid model format in Ollama response")
+                return False
+                
+            if self.model in model_names:
+                self.logger.info(f"Successfully connected to Ollama server. Model '{self.model}' is available.")
+                return True
             else:
-                return {
-                    "connected": False,
-                    "message": f"Server responded with status code {response.status_code}",
-                    "error": response.text
-                }
+                # Try to find a similar model
+                similar_models = [name for name in model_names if "llama" in name.lower()]
+                if similar_models:
+                    self.logger.warning(f"Model '{self.model}' not found. Similar models available: {', '.join(similar_models)}")
+                    # Use the first similar model
+                    self.model = similar_models[0]
+                    self.logger.info(f"Using similar model: {self.model}")
+                    return True
+                else:
+                    self.logger.warning(f"Connected to Ollama server, but model '{self.model}' is not available. Available models: {', '.join(model_names)}")
+                    return False
+                
+        except requests.exceptions.ConnectionError as e:
+            self.logger.error(f"Failed to connect to Ollama server. Is it running? Error: {str(e)}")
+            return False
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to connect to Ollama server: {str(e)}")
-            return {
-                "connected": False,
-                "message": f"Failed to connect to Ollama server at {self.base_url}. Is the server running?",
-                "error": str(e)
-            }
+            self.logger.error(f"Error testing Ollama connection: {str(e)}")
+            return False
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Error parsing Ollama response: {str(e)}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error testing Ollama connection: {str(e)}")
+            return False
     
-    def set_model(self, model_name: str) -> None:
-        """Change the model being used."""
-        self.model = model_name
-        logger.info(f"Model changed to: {model_name}")
-    
-    def generate(self, prompt: str, system_prompt: Optional[str] = None, temperature: float = 0.7, 
-               max_tokens: int = 2048, stream: bool = False) -> Dict[str, Any]:
-        """Generate a completion using the Ollama API."""
-        url = f"{self.api_url}/generate"
-        
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": stream
-        }
-        
-        if system_prompt:
-            payload["system"] = system_prompt
-        
+    def generate(self, prompt: str, temperature: float = 0.7, stream: bool = True) -> Union[str, Generator[str, None, None]]:
+        """Generate text using the Ollama API."""
         try:
-            logger.info(f"Sending request to Ollama with model {self.model}")
+            url = f"{self.base_url}/api/generate"
+            data = {
+                "model": self.model,
+                "prompt": prompt,
+                "temperature": temperature,
+                "stream": stream
+            }
+            
+            response = requests.post(url, json=data, stream=stream)
+            self.logger.info(f"The response from LLM is:")
+            self.logger.info(response)
             
             if stream:
-                # Handle streaming response
-                response_text = ""
-                with requests.post(url, json=payload, stream=True) as response:
-                    if response.status_code != 200:
-                        logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-                        return {
-                            "success": False,
-                            "error": f"API error: {response.status_code} - {response.text}"
-                        }
-                    
+                def generate_stream():
                     for line in response.iter_lines():
                         if line:
                             try:
                                 chunk = json.loads(line)
-                                if "response" in chunk:
-                                    response_text += chunk["response"]
-                                    yield chunk["response"]
+                                if 'response' in chunk:
+                                    yield chunk['response']
                             except json.JSONDecodeError:
-                                logger.warning(f"Failed to decode JSON from line: {line}")
-                
-                return {
-                    "success": True,
-                    "response": response_text,
-                    "model": self.model
-                }
+                                continue
+                return generate_stream()
             else:
-                # Handle regular response
-                response = requests.post(url, json=payload)
+                result = response.json()
+                return result.get('response', '')
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    return {
-                        "success": True,
-                        "response": result.get("response", ""),
-                        "model": self.model,
-                        "total_duration": result.get("total_duration"),
-                        "load_duration": result.get("load_duration"),
-                        "prompt_eval_count": result.get("prompt_eval_count"),
-                        "eval_count": result.get("eval_count"),
-                        "eval_duration": result.get("eval_duration")
-                    }
-                else:
-                    logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-                    return {
-                        "success": False,
-                        "error": f"API error: {response.status_code} - {response.text}"
-                    }
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request to Ollama failed: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"Error generating text: {str(e)}")
+            return ""
+    
+    def analyze_codebase(self, codebase: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze the entire codebase."""
+        try:
+            prompt = f"""Please analyze this codebase and provide a comprehensive overview:
+
+Codebase Summary:
+{json.dumps(codebase['summary'], indent=2)}
+
+Files:
+{json.dumps([{'path': f['path'], 'language': f['language']} for f in codebase['files']], indent=2)}
+
+Dependencies:
+{json.dumps(codebase['dependencies'], indent=2)}
+
+Please provide:
+1. Overall architecture and structure
+2. Key components and their relationships
+3. Main functionality and purpose
+4. Notable patterns or design decisions
+5. Potential areas for improvement
+
+Format your response in a clear, structured way."""
+
+            response = self.generate(prompt, temperature=0.3)
+            if isinstance(response, Generator):
+                response = ''.join(response)
+            
             return {
-                "success": False,
-                "error": f"Request failed: {str(e)}"
+                "analysis": response,
+                "success": True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing codebase: {str(e)}")
+            return {
+                "error": str(e),
+                "success": False
+            }
+    
+    def query_code(self, query: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Query the codebase with a specific question."""
+        try:
+            prompt = f"""Please answer this question about the codebase:
+
+Question: {query}
+
+Context:
+{json.dumps(context, indent=2)}
+
+Please provide:
+1. A direct answer to the question
+2. Relevant code snippets or examples
+3. Additional context or related information
+4. Any caveats or limitations
+
+Format your response in a clear, structured way."""
+
+            response = self.generate(prompt, temperature=0.3)
+            if isinstance(response, Generator):
+                response = ''.join(response)
+            
+            return {
+                "answer": response,
+                "success": True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error querying code: {str(e)}")
+            return {
+                "error": str(e),
+                "success": False
+            }
+    
+    def suggest_code_changes(self, code: str, suggestion: str) -> Dict[str, Any]:
+        """Suggest code changes based on a description."""
+        try:
+            prompt = f"""Please suggest code changes based on this description:
+
+Code:
+{code}
+
+Suggestion:
+{suggestion}
+
+Please provide:
+1. The modified code with changes
+2. Explanation of the changes
+3. Any additional considerations
+4. Potential impact of the changes
+
+Format your response in a clear, structured way."""
+
+            response = self.generate(prompt, temperature=0.3)
+            if isinstance(response, Generator):
+                response = ''.join(response)
+            
+            return {
+                "suggestion": response,
+                "success": True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error suggesting code changes: {str(e)}")
+            return {
+                "error": str(e),
+                "success": False
             }
 
-    def analyze_codebase(self, codebase_summary: Dict, files_content: Dict[str, str], 
-                       dependencies: Dict[str, List[str]]) -> Dict[str, Any]:
-        """Analyze the codebase structure and provide high-level insights."""
-        system_prompt = """You are CodeGenie, an expert code analyzer. Your task is to analyze a codebase and provide insights about its structure, architecture, and dependencies. Focus on:
-1. The overall architecture and design patterns
-2. Main components and their responsibilities
-3. How files and modules are related to each other
-4. Key functionality of the codebase
-Be specific, technical, and accurate in your analysis."""
-        
-        prompt = f"""I need you to analyze this codebase:
-
-## Codebase Summary
-{json.dumps(codebase_summary, indent=2)}
-
-## Files and Their Dependencies
-The codebase contains {len(files_content)} files. Here are the key dependencies:
-{json.dumps(dependencies, indent=2)}
-
-Based on this information, please:
-1. Describe the overall architecture and structure of this codebase
-2. Identify the main components and their responsibilities 
-3. Explain how the components are related to each other
-4. Identify key functionality of the application
-5. List any design patterns or architectural approaches you observe
-
-Please be specific and technical in your analysis.
-"""
-        
-        return self.generate(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=4096)
-    
-    def query_code(self, query: str, relevant_files: Dict[str, str], 
-                 dependencies: Optional[Dict[str, List[str]]] = None) -> Dict[str, Any]:
-        """Answer a query about specific code files."""
-        system_prompt = """You are CodeGenie, an expert code assistant. Your task is to answer queries about code with high precision and technical accuracy. When examining code:
-1. Provide specific explanations referring to actual code snippets
-2. If asked how something works, trace through the code execution step-by-step
-3. When explaining relationships between files, be explicit about how they interact
-4. For questions about implementing new features, provide specific, implementable code suggestions
-5. Always ground your answers in the actual code you've been provided
-
-Be technical, precise, and helpful."""
-        
-        # Create a context that includes the content of all relevant files
-        context = "Here are the relevant code files for your query:\n\n"
-        
-        for file_path, content in relevant_files.items():
-            context += f"## File: {file_path}\n```\n{content}\n```\n\n"
-        
-        if dependencies:
-            context += "## Dependencies between these files:\n"
-            context += json.dumps(dependencies, indent=2) + "\n\n"
-        
-        prompt = f"{context}\n\nQuery: {query}\n\nPlease answer the query based on these code files."
-        
-        return self.generate(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=4096)
-    
-    def suggest_code_changes(self, query: str, relevant_files: Dict[str, str], 
-                          dependencies: Optional[Dict[str, List[str]]] = None) -> Dict[str, Any]:
-        """Suggest changes to implement new features or fix issues."""
-        system_prompt = """You are CodeGenie, an expert programmer. Your task is to suggest specific code changes to implement features or fix issues. When suggesting changes:
-1. Provide complete, working code snippets that can be directly implemented
-2. Clearly indicate which files need to be modified and exactly where in each file
-3. Explain the reasoning behind your suggested changes
-4. Consider edge cases and error handling
-5. Ensure your suggested changes maintain coding style consistency with the existing codebase
-
-Be detailed, precise, and ensure your suggestions are ready to implement."""
-        
-        # Create a context that includes the content of all relevant files
-        context = "Here are the relevant code files for implementing the requested changes:\n\n"
-        
-        for file_path, content in relevant_files.items():
-            context += f"## File: {file_path}\n```\n{content}\n```\n\n"
-        
-        if dependencies:
-            context += "## Dependencies between these files:\n"
-            context += json.dumps(dependencies, indent=2) + "\n\n"
-        
-        prompt = f"{context}\n\nFeature Request: {query}\n\nPlease suggest specific code changes to implement this feature or fix this issue. For each change, specify the file path, the location of the change, and provide the complete code snippet to be added or modified."
-        
-        return self.generate(prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=8192)
+    def set_model(self, model_name: str) -> None:
+        """Change the model being used."""
+        self.model = model_name
+        self.logger.info(f"Model changed to: {model_name}")
     
     def find_relevant_files(self, query: str, file_list: List[str], file_summaries: Dict[str, str]) -> Dict[str, Any]:
         """Identify which files are most relevant to a specific query."""
@@ -233,4 +251,41 @@ Be precise and thorough in your analysis."""
         
         prompt = f"{context}\n\nPlease identify and rank the files most relevant to this query. For each file, explain why it's relevant and how it relates to the query."
         
-        return self.generate(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=2048)
+        return self.generate(prompt, system_prompt=system_prompt, temperature=0.3, max_tokens=16384)
+
+    def get_available_models(self) -> List[str]:
+        """Get list of available models from Ollama server."""
+        try:
+            response = requests.get(f"{self.base_url}/api/tags")
+            response.raise_for_status()
+            
+            data = response.json()
+            if not isinstance(data, dict):
+                self.logger.error("Invalid response format from Ollama server")
+                return []
+                
+            models = data.get("models", [])
+            if not models:
+                self.logger.warning("No models available on Ollama server")
+                return []
+                
+            model_names = [model.get("name") for model in models if isinstance(model, dict)]
+            if not model_names:
+                self.logger.error("Invalid model format in Ollama response")
+                return []
+                
+            self.logger.info(f"Available models: {', '.join(model_names)}")
+            return model_names
+                
+        except requests.exceptions.ConnectionError:
+            self.logger.error("Failed to connect to Ollama server. Is it running?")
+            return []
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error getting available models: {str(e)}")
+            return []
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Error parsing Ollama response: {str(e)}")
+            return []
+        except Exception as e:
+            self.logger.error(f"Unexpected error getting available models: {str(e)}")
+            return []

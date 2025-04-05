@@ -1,153 +1,141 @@
+import { useState, useRef, useEffect } from 'react';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/components/ui/use-toast";
+import { Send, CornerDownLeft } from "lucide-react";
+import { ChatMessage, ChatMessageType } from '@/types/chat';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, CornerDownLeft } from 'lucide-react';
-import ChatMessage, { ChatMessageType } from './ChatMessage';
-import { CodeIndicesService } from '@/utils/codeIndicesService';
-import { useToast } from '@/components/ui/use-toast';
-import { v4 as uuidv4 } from 'uuid';
+// Base URL for API
+const API_BASE_URL = "http://localhost:5001/api";
 
-type CodeChatProps = {
-  onFileSelect?: (filePath: string) => void;
-  className?: string;
-};
+interface FileMethod {
+  name: string;
+  type: string;
+  summary: string;
+}
 
-export function CodeChat({ onFileSelect, className }: CodeChatProps) {
-  const [messages, setMessages] = useState<ChatMessageType[]>([]);
+interface FileInfo {
+  summary: string;
+  type: string;
+  is_entry_point: boolean;
+  is_core_file: boolean;
+  methods: FileMethod[];
+}
+
+interface RelevantFiles {
+  [key: string]: FileInfo;
+}
+
+export default function CodeChat() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [relevantFiles, setRelevantFiles] = useState<RelevantFiles>({});
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const { toast } = useToast();
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (scrollAreaRef.current) {
+      scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+    }
   }, [messages]);
 
   const handleSendMessage = async () => {
-    if (!input.trim()) return;
-    
+    if (!input.trim() || isLoading) return;
+
     // Add user message
-    const userMessage: ChatMessageType = {
-      id: uuidv4(),
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      type: ChatMessageType.USER,
       content: input,
-      role: 'user',
       timestamp: new Date(),
-    };
-    
-    // Add loading message for assistant
-    const assistantLoadingMessage: ChatMessageType = {
-      id: uuidv4(),
-      content: '',
-      role: 'assistant',
+      isLoading: false
+    }]);
+
+    // Add assistant message placeholder
+    setMessages(prev => [...prev, {
+      id: (Date.now() + 1).toString(),
+      type: ChatMessageType.ASSISTANT,
+      content: "",
       timestamp: new Date(),
-      isLoading: true,
-    };
-    
-    setMessages(messages => [...messages, userMessage, assistantLoadingMessage]);
-    setInput('');
+      isLoading: true
+    }]);
+
     setIsLoading(true);
-    
+    setInput("");
+
     try {
-      // Try to query the codebase with streaming response
-      const stream = await CodeIndicesService.queryCode(input, true) as ReadableStream;
-      
-      if (!stream) {
-        throw new Error("Failed to get response stream");
-      }
-      
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let responseText = '';
-      let relevantFiles: string[] = [];
-      
-      // Process the streamed response
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.substring(6));
-              
-              if (data.chunk) {
-                responseText += data.chunk;
-                
-                // Update the message with the current accumulated response
-                setMessages(messages => 
-                  messages.map(msg => 
-                    msg.id === assistantLoadingMessage.id
-                      ? { ...msg, content: responseText, isLoading: false }
-                      : msg
-                  )
-                );
-              } else if (data.error) {
-                throw new Error(data.error);
-              } else if (data.done) {
-                // Handle completion if needed
-              }
-            } catch (e) {
-              console.error("Error parsing SSE data:", e);
-            }
-          }
-        }
-      }
-      
-      // Get relevant files after the streamed response is complete
-      const fullResponse = await CodeIndicesService.queryCode(input);
-      
-      if (typeof fullResponse !== 'object' || !fullResponse) {
-        throw new Error("Invalid response format");
-      }
-      
-      const typedResponse = fullResponse as { success: boolean; relevant_files?: string[] };
-      
-      if (typedResponse.success && typedResponse.relevant_files) {
-        relevantFiles = typedResponse.relevant_files;
-        
-        // Update the message with relevant files
-        setMessages(messages => 
-          messages.map(msg => 
-            msg.id === assistantLoadingMessage.id
-              ? { ...msg, relevantFiles }
-              : msg
-          )
-        );
-      }
-    } catch (error) {
-      console.error("Error querying code:", error);
-      
-      // Update the loading message with error information
-      setMessages(messages => 
-        messages.map(msg => 
-          msg.id === assistantLoadingMessage.id
-            ? { 
-                ...msg, 
-                content: `Sorry, I couldn't process your request. ${error instanceof Error ? error.message : "An unknown error occurred."}`, 
-                isLoading: false 
-              }
-            : msg
-        )
+      const eventSource = new EventSource(
+        `${API_BASE_URL}/query?query=${encodeURIComponent(input)}&stream=true`
       );
-      
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.relevant_files) {
+            setRelevantFiles(data.relevant_files);
+          } else if (data.chunk) {
+            setMessages(prev => {
+              const newMessages = [...prev];
+              const lastMessage = newMessages[newMessages.length - 1];
+              if (lastMessage.type === ChatMessageType.ASSISTANT) {
+                lastMessage.content += data.chunk;
+                lastMessage.isLoading = false;
+              }
+              return newMessages;
+            });
+          } else if (data.error) {
+            toast({
+              title: "Error",
+              description: data.error,
+              variant: "destructive",
+            });
+            setIsLoading(false);
+          } else if (data.done) {
+            setIsLoading(false);
+          }
+        } catch (error) {
+          console.error('Error parsing message:', error);
+          toast({
+            title: "Error",
+            description: "Failed to parse server response",
+            variant: "destructive",
+          });
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('EventSource error:', error);
+        eventSource.close();
+        setIsLoading(false);
+        toast({
+          title: "Error",
+          description: "Failed to get response from server. Please try again.",
+          variant: "destructive",
+        });
+      };
+
+      eventSource.addEventListener('done', () => {
+        eventSource.close();
+        setIsLoading(false);
+      });
+    } catch (error) {
+      console.error('Error:', error);
+      setIsLoading(false);
       toast({
-        title: "Query Error",
-        description: error instanceof Error ? error.message : "Failed to query the codebase",
+        title: "Error",
+        description: "Failed to send message. Please try again.",
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -155,92 +143,134 @@ export function CodeChat({ onFileSelect, className }: CodeChatProps) {
   };
 
   return (
-    <div className={`flex flex-col h-full ${className}`}>
-      <ScrollArea className="flex-1 p-0">
-        <div className="flex flex-col divide-y">
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 text-center p-4">
-              <div className="rounded-full bg-primary/10 p-3 mb-4">
-                <svg 
-                  width="24" 
-                  height="24" 
-                  viewBox="0 0 24 24" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2" 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  className="text-primary h-6 w-6"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="16" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12.01" y2="8" />
-                </svg>
+    <div className="flex flex-col h-screen">
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea ref={scrollAreaRef} className="h-full p-4">
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={`mb-4 ${
+                message.type === ChatMessageType.USER ? 'text-right' : 'text-left'
+              }`}
+            >
+              <div
+                className={`inline-block max-w-[80%] p-4 rounded-lg ${
+                  message.type === ChatMessageType.USER
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted'
+                }`}
+              >
+                <pre className="whitespace-pre-wrap break-words font-sans">
+                  {message.content}
+                </pre>
               </div>
-              <h3 className="font-medium text-lg mb-2">Ask questions about your code</h3>
-              <p className="text-sm text-muted-foreground max-w-md">
-                After indexing your code, you can ask questions like "How does the user authentication flow work?" or 
-                "What files are responsible for handling API requests?"
-              </p>
             </div>
-          ) : (
-            messages.map((message) => (
-              <ChatMessage 
-                key={message.id} 
-                message={message} 
-                onFileClick={onFileSelect}
-              />
-            ))
+          ))}
+          {Object.keys(relevantFiles).length > 0 && (
+            <Card className="mb-4">
+              <CardHeader>
+                <CardTitle>Relevant Files</CardTitle>
+                <CardDescription>
+                  Files that are most relevant to your query
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Accordion type="single" collapsible>
+                  {Object.entries(relevantFiles).map(([filePath, info]) => (
+                    <AccordionItem key={filePath} value={filePath}>
+                      <AccordionTrigger>
+                        <div className="flex items-center gap-2">
+                          <span>{filePath}</span>
+                          {info.is_entry_point && (
+                            <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                              Entry Point
+                            </span>
+                          )}
+                          {info.is_core_file && (
+                            <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                              Core File
+                            </span>
+                          )}
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-4">
+                          <div>
+                            <h4 className="font-semibold">Summary</h4>
+                            <p>{info.summary}</p>
+                          </div>
+                          {info.methods.length > 0 && (
+                            <div>
+                              <h4 className="font-semibold">Methods</h4>
+                              <ul className="list-disc list-inside space-y-2">
+                                {info.methods.map((method) => (
+                                  <li key={method.name}>
+                                    <span className="font-mono">{method.name}</span>
+                                    <span className="text-sm text-muted-foreground">
+                                      {' '}
+                                      - {method.summary}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </CardContent>
+            </Card>
           )}
-          <div ref={messagesEndRef} />
-        </div>
-      </ScrollArea>
-      
+          {suggestions.length > 0 && (
+            <Card className="mb-4">
+              <CardHeader>
+                <CardTitle>Suggested Questions</CardTitle>
+                <CardDescription>
+                  You might want to ask about these aspects
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ul className="list-disc list-inside space-y-2">
+                  {suggestions.map((suggestion, index) => (
+                    <li
+                      key={index}
+                      className="cursor-pointer hover:text-primary"
+                      onClick={() => {
+                        setInput(suggestion.replace(/^- /, ''));
+                      }}
+                    >
+                      {suggestion}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+        </ScrollArea>
+      </div>
       <div className="p-4 border-t">
-        <div className="flex space-x-2">
+        <div className="flex gap-2">
           <Input
-            placeholder="Ask about your code..."
+            placeholder="Ask about the codebase..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isLoading}
-            className="flex-1"
           />
-          <Button 
-            onClick={handleSendMessage} 
-            disabled={!input.trim() || isLoading}
-            size="icon"
+          <Button
+            onClick={handleSendMessage}
+            disabled={isLoading || !input.trim()}
           >
             {isLoading ? (
-              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                  fill="none"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
+              <CornerDownLeft className="h-4 w-4 animate-spin" />
             ) : (
-              <Send className="h-5 w-5" />
+              <Send className="h-4 w-4" />
             )}
           </Button>
-        </div>
-        <div className="flex justify-end mt-2">
-          <div className="text-xs text-muted-foreground flex items-center">
-            Press <kbd className="px-1.5 py-0.5 bg-muted border rounded text-xs mx-1 inline-flex items-center"><CornerDownLeft className="h-3 w-3" /></kbd> to send
-          </div>
         </div>
       </div>
     </div>
   );
 }
-
-export default CodeChat;

@@ -1,7 +1,7 @@
 import { toast } from "@/components/ui/use-toast";
 
 // Base URL for API - change to the actual Python backend URL
-const API_BASE_URL = "http://localhost:5000/api";
+const API_BASE_URL = "http://localhost:5001/api";
 
 // Types for the service
 export type IndexingStatus = {
@@ -314,7 +314,7 @@ export class CodeIndicesService {
   }
 
   // Query the codebase
-  static async queryCode(query: string, stream: boolean = false): Promise<LLMResponse | ReadableStream> {
+  static async queryCode(query: string, stream: boolean = false): Promise<LLMResponse | Response> {
     try {
       if (stream) {
         const response = await fetch(`${API_BASE_URL}/query`, {
@@ -329,7 +329,8 @@ export class CodeIndicesService {
           throw new Error(`HTTP error ${response.status}`);
         }
 
-        return response.body as ReadableStream;
+        // Return the response directly without trying to access body
+        return response;
       } else {
         const response = await fetch(`${API_BASE_URL}/query`, {
           method: "POST",

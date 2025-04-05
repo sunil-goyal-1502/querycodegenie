@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Check, ChevronsUpDown, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,7 +19,7 @@ type OllamaSelectorProps = {
 export function OllamaSelector({ onConnect, className }: OllamaSelectorProps) {
   const [open, setOpen] = useState(false);
   const [models, setModels] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>('deepseek-coder');
+  const [selectedModel, setSelectedModel] = useState<string>('llama3:8b');
   const [serverUrl, setServerUrl] = useState('http://localhost:11434');
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -156,7 +155,7 @@ export function OllamaSelector({ onConnect, className }: OllamaSelectorProps) {
               <ul className="list-disc pl-5 mt-1">
                 <li>Your Ollama server is running</li>
                 <li>The URL is correct (including protocol)</li>
-                <li>The backend server is running at http://localhost:5000</li>
+                <li>The backend server is running at http://localhost:5001</li>
                 <li>You're accessing this app from the same machine where Ollama is running</li>
               </ul>
             </div>
