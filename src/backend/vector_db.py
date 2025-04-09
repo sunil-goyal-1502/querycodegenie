@@ -196,4 +196,44 @@ class VectorDB:
             
         except Exception as e:
             self.logger.error(f"Error getting file content from vector database: {str(e)}")
-            return None 
+            return None
+    
+    def add_document(self, file_path: str, content: str, metadata: Dict[str, Any]) -> bool:
+        """Add a document to the vector database."""
+        try:
+            # Validate inputs
+            if not file_path:
+                self.logger.error("File path is required")
+                return False
+                
+            if not content:
+                self.logger.warning(f"No content provided for file {file_path}, using empty string")
+                content = ""
+                
+            if not metadata:
+                self.logger.warning(f"No metadata provided for file {file_path}")
+                metadata = {}
+            
+            # Create embedding for the content
+            embedding = self.model.encode([content])[0]
+            
+            # Add embedding to index
+            self.index.add(np.array([embedding], dtype=np.float32))
+            
+            # Update metadata
+            self.metadata.append({
+                'id': len(self.metadata),
+                'file_path': file_path,
+                'content': content,
+                'type': metadata.get('type', 'file'),
+                **metadata
+            })
+            
+            # Save the updated index and metadata
+            self._save_index()
+            self._save_metadata()
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Error adding document to vector database: {str(e)}")
+            return False 

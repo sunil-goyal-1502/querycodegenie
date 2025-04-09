@@ -401,6 +401,10 @@ def analyze_codebase():
     
     return jsonify(result)
 
+def error_stream(message: str) -> Generator[str, None, None]:
+    """Stream an error message."""
+    yield json.dumps({"error": message, "done": True}) + "\n"
+
 @app.route('/api/query', methods=['GET', 'POST'])
 def query_code():
     """Handle code query requests."""
@@ -412,29 +416,13 @@ def query_code():
         if not query:
             logger.error("No query provided")
             if stream:
-                return Response(
-                    error_stream("No query provided"),
-                    mimetype='text/event-stream',
-                    headers={
-                        'Cache-Control': 'no-cache',
-                        'Connection': 'keep-alive',
-                        'X-Accel-Buffering': 'no'
-                    }
-                )
+                return Response(error_stream("No query provided"), mimetype='text/event-stream')
             return jsonify({"error": "No query provided"}), 400
 
         if not hasattr(indexer, 'file_contents') or not indexer.file_contents:
             logger.error("Codebase not indexed yet")
             if stream:
-                return Response(
-                    error_stream("Codebase not indexed yet"),
-                    mimetype='text/event-stream',
-                    headers={
-                        'Cache-Control': 'no-cache',
-                        'Connection': 'keep-alive',
-                        'X-Accel-Buffering': 'no'
-                    }
-                )
+                return Response(error_stream("Codebase not indexed yet"), mimetype='text/event-stream')
             return jsonify({"error": "Codebase not indexed yet"}), 400
 
         if stream:
@@ -540,15 +528,7 @@ def query_code():
     except Exception as e:
         logger.error(f"Error in query_code: {str(e)}")
         if stream:
-            return Response(
-                error_stream(str(e)),
-                mimetype='text/event-stream',
-                headers={
-                    'Cache-Control': 'no-cache',
-                    'Connection': 'keep-alive',
-                    'X-Accel-Buffering': 'no'
-                }
-            )
+            return Response(error_stream(str(e)), mimetype='text/event-stream')
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/suggest-changes', methods=['POST'])

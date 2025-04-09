@@ -36,6 +36,9 @@ class CodeIndexer:
         self.vector_db = VectorDB()
         self.db = Database()
         
+        # Initialize search engine
+        self.search_engine = VectorDB()
+        
         # Initialize logging
         self.logger = logging.getLogger(__name__)
         
@@ -221,8 +224,8 @@ class CodeIndexer:
     def index_files(self, repo_path: str) -> bool:
         """Index all files in the repository."""
         try:
-            # Reset indexing status
-            self.db.reset_indexing_status()
+            # Get current indexing status
+            current_status = self.db.get_indexing_status()
             
             # Get all files in the repository
             all_files = []
@@ -231,24 +234,24 @@ class CodeIndexer:
                     file_path = os.path.join(root, file)
                     all_files.append(file_path)
             
-            total_files = len(all_files)
-            processed_files = 0
-            failed_files = 0
-            indexed_files = []
-            failed_files_details = []
-            file_types = {}
-            languages = {}
+            total_files = len(all_files) + current_status.get('total_files', 0)
+            processed_files = current_status.get('processed_files', 0)
+            failed_files = current_status.get('failed_files', 0)
+            indexed_files = current_status.get('indexed_files', [])
+            failed_files_details = current_status.get('failed_files_details', [])
+            file_types = current_status.get('file_types', {})
+            languages = current_status.get('languages', {})
             
             # Update initial status
             self.db.update_indexing_status(
                 total_files=total_files,
-                processed_files=0,
-                failed_files=0,
-                success_rate=0.0,
-                file_types={},
-                languages={},
-                indexed_files=[],
-                failed_files_details=[],
+                processed_files=processed_files,
+                failed_files=failed_files,
+                success_rate=processed_files / total_files if total_files > 0 else 0.0,
+                file_types=file_types,
+                languages=languages,
+                indexed_files=indexed_files,
+                failed_files_details=failed_files_details,
                 is_complete=False,
                 is_loading=True,
                 repo_url=repo_path
@@ -257,6 +260,11 @@ class CodeIndexer:
             # Process each file
             for file_path in all_files:
                 try:
+                    # Skip if already indexed
+                    if file_path in indexed_files:
+                        self.logger.info(f"Skipping already indexed file: {file_path}")
+                        continue
+                    
                     # Process file
                     file_info = self._process_file(file_path)
                     
@@ -288,6 +296,32 @@ class CodeIndexer:
                             )
                         
                         indexed_files.append(file_path)
+                        
+                        # Add to search engine
+                        self.search_engine.add_document(
+                            file_path=file_info['file_path'],
+                            content=file_info['content'],
+                            metadata={
+                                'language': file_info['language'],
+                                'summary': file_info['summary'],
+                                'detailed_summary': file_info['detailed_summary'],
+                                'is_entry_point': file_info['is_entry_point'],
+                                'is_core_file': file_info['is_core_file']
+                            }
+                        )
+                        
+                        # Add methods to search engine
+                        for method in file_info['methods']:
+                            self.search_engine.add_document(
+                                file_path=file_info['file_path'],
+                                content=method['body'],
+                                metadata={
+                                    'type': 'method',
+                                    'name': method['name'],
+                                    'line_numbers': method['line_numbers'],
+                                    'summary': method['summary']
+                                }
+                            )
                     else:
                         failed_files += 1
                         failed_files_details.append({
@@ -297,25 +331,24 @@ class CodeIndexer:
                     
                     processed_files += 1
                     
-                    # Update progress every 10 files or on last file
-                    if processed_files % 10 == 0 or processed_files == total_files:
-                        success_rate = (processed_files - failed_files) / processed_files if processed_files > 0 else 0.0
-                        
-                        self.db.update_indexing_status(
-                            total_files=total_files,
-                            processed_files=processed_files,
-                            failed_files=failed_files,
-                            success_rate=success_rate,
-                            file_types=file_types,
-                            languages=languages,
-                            indexed_files=indexed_files,
-                            failed_files_details=failed_files_details,
-                            is_complete=(processed_files == total_files),
-                            is_loading=(processed_files < total_files),
-                            repo_url=repo_path
-                        )
-                        
-                        self.logger.info(f"Processed {processed_files}/{total_files} files")
+                    # Update progress every file
+                    success_rate = (processed_files - failed_files) / processed_files if processed_files > 0 else 0.0
+                    
+                    self.db.update_indexing_status(
+                        total_files=total_files,
+                        processed_files=processed_files,
+                        failed_files=failed_files,
+                        success_rate=success_rate,
+                        file_types=file_types,
+                        languages=languages,
+                        indexed_files=indexed_files,
+                        failed_files_details=failed_files_details,
+                        is_complete=(processed_files == total_files),
+                        is_loading=(processed_files < total_files),
+                        repo_url=repo_path
+                    )
+                    
+                    self.logger.info(f"Processed {processed_files}/{total_files} files")
                 
                 except Exception as e:
                     self.logger.error(f"Error processing file {file_path}: {str(e)}")
@@ -1040,7 +1073,7 @@ Detailed summary:"""
             
             # Check if file is empty
             if os.path.getsize(abs_path) == 0:
-                logger.debug(f"Skipping empty file: {abs_path}")
+                self.logger.debug(f"Skipping empty file: {abs_path}")
                 return False
             
             # Check if file is readable
@@ -1165,14 +1198,19 @@ Detailed summary:"""
         try:
             self.logger.info(f"Loading repository from {repo_url} to {repo_path}")
             
+            # Get current indexing status
+            current_status = self.db.get_indexing_status()
+            
             # Update database status to indicate loading has started
             self.db.update_indexing_status(
-                total_files=0,
-                processed_files=0,
-                failed_files=0,
-                success_rate=0,
-                file_types={},
-                languages={},
+                total_files=current_status.get('total_files', 0),
+                processed_files=current_status.get('processed_files', 0),
+                failed_files=current_status.get('failed_files', 0),
+                success_rate=current_status.get('success_rate', 0),
+                file_types=current_status.get('file_types', {}),
+                languages=current_status.get('languages', {}),
+                indexed_files=current_status.get('indexed_files', []),
+                failed_files_details=current_status.get('failed_files_details', []),
                 is_complete=False,
                 is_loading=True,
                 repo_url=repo_url
@@ -1190,12 +1228,17 @@ Detailed summary:"""
             except subprocess.CalledProcessError as e:
                 self.logger.error(f"Failed to clone repository: {e.stderr.decode()}")
                 self.db.update_indexing_status(
-                    total_files=0,
-                    processed_files=0,
-                    failed_files=1,
-                    success_rate=0,
-                    file_types={},
-                    languages={},
+                    total_files=current_status.get('total_files', 0),
+                    processed_files=current_status.get('processed_files', 0),
+                    failed_files=current_status.get('failed_files', 0) + 1,
+                    success_rate=current_status.get('success_rate', 0),
+                    file_types=current_status.get('file_types', {}),
+                    languages=current_status.get('languages', {}),
+                    indexed_files=current_status.get('indexed_files', []),
+                    failed_files_details=current_status.get('failed_files_details', []) + [{
+                        'file_path': repo_url,
+                        'error': 'Repository cloning failed'
+                    }],
                     is_complete=True,
                     is_loading=False,
                     repo_url=repo_url
@@ -1203,48 +1246,44 @@ Detailed summary:"""
                 return False
             
             # Index all files in the repository
-            result = self.index_files(repo_path)
+            success = self.index_files(repo_path)
+            
+            # Get the current indexing status
+            status = self.db.get_indexing_status()
             
             # Update status to indicate loading is complete
-            if result["status"] == "success":
-                self.db.update_indexing_status(
-                    total_files=result["stats"]["total_files"],
-                    processed_files=result["stats"]["processed_files"],
-                    failed_files=result["stats"]["failed_files"],
-                    success_rate=result["stats"]["success_rate"],
-                    file_types=result["stats"]["file_types"],
-                    languages=result["stats"]["languages"],
-                    is_complete=True,
-                    is_loading=False,
-                    repo_url=repo_url
-                )
-                self.logger.info(f"Repository loading completed with success={True}")
-                return True
-            else:
-                self.db.update_indexing_status(
-                    total_files=0,
-                    processed_files=0,
-                    failed_files=1,
-                    success_rate=0,
-                    file_types={},
-                    languages={},
-                    is_complete=True,
-                    is_loading=False,
-                    repo_url=repo_url
-                )
-                self.logger.error(f"Repository loading failed: {result['message']}")
-                return False
+            self.db.update_indexing_status(
+                total_files=status['total_files'],
+                processed_files=status['processed_files'],
+                failed_files=status['failed_files'],
+                success_rate=status['success_rate'],
+                file_types=status['file_types'],
+                languages=status['languages'],
+                indexed_files=status['indexed_files'],
+                failed_files_details=status['failed_files_details'],
+                is_complete=True,
+                is_loading=False,
+                repo_url=repo_url
+            )
+            
+            # Initialize search engine with indexed files
+            self._initialize_search_engine()
+            
+            self.logger.info(f"Repository loading completed with success={success}")
+            return success
             
         except Exception as e:
             self.logger.error(f"Error loading repository: {str(e)}")
             # Update status to indicate loading failed
             self.db.update_indexing_status(
-                total_files=0,
-                processed_files=0,
-                failed_files=0,
-                success_rate=0,
-                file_types={},
-                languages={},
+                total_files=current_status.get('total_files', 0),
+                processed_files=current_status.get('processed_files', 0),
+                failed_files=current_status.get('failed_files', 0),
+                success_rate=current_status.get('success_rate', 0),
+                file_types=current_status.get('file_types', {}),
+                languages=current_status.get('languages', {}),
+                indexed_files=current_status.get('indexed_files', []),
+                failed_files_details=current_status.get('failed_files_details', []),
                 is_complete=False,
                 is_loading=False,
                 repo_url=repo_url
@@ -1395,3 +1434,52 @@ Detailed summary:"""
         except Exception as e:
             self.logger.error(f"Error extracting methods: {str(e)}")
             return []
+
+    def _initialize_search_engine(self) -> None:
+        """Initialize the search engine with indexed files."""
+        try:
+            # Get all indexed files from the database
+            indexed_files = self.db.get_indexed_files()
+            
+            # Process each file and add to search engine
+            for file_info in indexed_files:
+                try:
+                    # Get file content
+                    content = self.db.get_file_content(file_info['file_path'])
+                    if not content:
+                        continue
+                    
+                    # Add to search engine
+                    self.search_engine.add_document(
+                        file_path=file_info['file_path'],
+                        content=content,
+                        metadata={
+                            'language': file_info['language'],
+                            'summary': file_info['summary'],
+                            'detailed_summary': file_info['detailed_summary'],
+                            'is_entry_point': file_info['is_entry_point'],
+                            'is_core_file': file_info['is_core_file']
+                        }
+                    )
+                    
+                    # Add methods to search engine
+                    methods = self.db.get_file_methods(file_info['file_path'])
+                    for method in methods:
+                        self.search_engine.add_document(
+                            file_path=file_info['file_path'],
+                            content=method['body'],
+                            metadata={
+                                'type': 'method',
+                                'name': method['name'],
+                                'line_numbers': method['line_numbers'],
+                                'summary': method['summary']
+                            }
+                        )
+                    
+                except Exception as e:
+                    self.logger.error(f"Error adding file {file_info['file_path']} to search engine: {str(e)}")
+            
+            self.logger.info("Search engine initialized with indexed files")
+            
+        except Exception as e:
+            self.logger.error(f"Error initializing search engine: {str(e)}")
